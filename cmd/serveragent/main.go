@@ -96,6 +96,7 @@ func main() {
 		client:    NewClient(cfg),
 		spool:     spool,
 		hostname:  resolveHostname(cfg),
+		osPretty:  osPretty(),
 	}
 
 	if *oneShot {
@@ -116,6 +117,7 @@ type Agent struct {
 	client    *Client
 	spool     *Spool
 	hostname  string
+	osPretty  string
 
 	// backoff is the current penalty after a transient push failure, and nextAttempt
 	// is when pushing may resume. Both are only touched from the single Run loop.
@@ -212,6 +214,7 @@ func (a *Agent) flush(ctx context.Context) error {
 			OS:           runtime.GOOS,
 			Arch:         runtime.GOARCH,
 			Hostname:     a.hostname,
+			OSPretty:     a.osPretty,
 			Samples:      batch,
 		})
 		if !errors.Is(err, ErrBatchTooLarge) {
@@ -319,9 +322,21 @@ func runDryRun() {
 	time.Sleep(time.Second)
 	sample := collector.Collect(ctx, time.Now())
 
-	encoded, err := json.MarshalIndent(sample, "", "  ")
+	// Wrapped in the same envelope Push sends, not just the sample: agent_version, os,
+	// arch, hostname, and os_pretty are real fields on every push and belong in "exactly
+	// what would be sent", the same as the metrics themselves.
+	req := protocol.IngestRequest{
+		AgentVersion: AgentVersion,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+		Hostname:     resolveHostname(&Config{}),
+		OSPretty:     osPretty(),
+		Samples:      []protocol.Sample{sample},
+	}
+
+	encoded, err := json.MarshalIndent(req, "", "  ")
 	if err != nil {
-		log.Fatalf("encode sample: %v", err)
+		log.Fatalf("encode request: %v", err)
 	}
 	fmt.Println("This is exactly what would be sent, and nothing else:")
 	fmt.Println(string(encoded))
@@ -357,6 +372,7 @@ Network
 Host
   uptime_seconds
   hostname, OS, architecture, agent version      hostname is optional, see SP_HOSTNAME
+  OS distribution name and version                e.g. "Ubuntu 22.04.4 LTS", for display only
 
 It does NOT collect:
   - process names, command lines, or arguments

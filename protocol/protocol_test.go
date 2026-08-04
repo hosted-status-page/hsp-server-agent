@@ -172,6 +172,7 @@ func TestFullBatchFitsWithinBodyCap(t *testing.T) {
 		OS:           "linux",
 		Arch:         "amd64",
 		Hostname:     strings.Repeat("h", 253),
+		OSPretty:     strings.Repeat("o", MaxOSPrettyBytes),
 		Samples:      make([]Sample, MaxBatch),
 	}
 	for i := range req.Samples {

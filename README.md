@@ -34,7 +34,7 @@ this agent feeds.
 | Load    | `load1`, `load5`, `load15`                                                                                                                   |
 | Disk    | `disk_used_bytes`, `disk_total_bytes` (root), `disk_read_bps`, `disk_write_bps`, plus per-mount used/total for physical filesystems (max 20) |
 | Network | `net_rx_bps`, `net_tx_bps`, plus per-interface rates for interfaces with traffic (max 10)                                                    |
-| Host    | `uptime_seconds`, optional hostname, OS, architecture, agent version                                                                         |
+| Host    | `uptime_seconds`, optional hostname, OS, architecture, agent version, a display-only OS distribution string (e.g. "Ubuntu 22.04.4 LTS")      |
 
 `serveragent -metrics` prints this from the binary itself, so it cannot drift from what
 the code does.

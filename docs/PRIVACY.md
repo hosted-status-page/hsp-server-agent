@@ -32,6 +32,18 @@ The agent therefore treats the hostname as optional, not incidental:
 A host is identified to the server by its server ID, which is a random UUID. The hostname
 is a convenience label, and the system works without it.
 
+### The OS distribution string
+
+The agent also reports a human-readable OS description — `PRETTY_NAME` from
+`/etc/os-release` on Linux, or the product name and version from `sw_vers` on macOS —
+so the dashboard can show "Ubuntu 22.04.4 LTS" instead of "linux/amd64".
+
+This describes the machine's software, not a person, and unlike the hostname it carries
+no naming convention that would put someone's identity in it. It is not exposed on any
+public status page: `models.PublicServerMetric` on the server side is asserted by test
+to carry no field beyond the metric values themselves, so this stays a dashboard-only
+detail available to the account that owns the host.
+
 ### Free-form payloads
 
 Process lists, command lines, and environment variables are where secrets and identities

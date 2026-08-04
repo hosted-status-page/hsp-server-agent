@@ -60,6 +60,11 @@ const (
 
 	// DefaultIntervalSeconds is the agent's default collection and push cadence.
 	DefaultIntervalSeconds = 60
+
+	// MaxOSPrettyBytes bounds IngestRequest.OSPretty. It is sent once per request, not
+	// once per sample, so it does not enter the per-batch sizing assertions below —
+	// 128 bytes against a 512KB body cap is noise.
+	MaxOSPrettyBytes = 128
 )
 
 // Compile-time guarantee that the agent's detail budget stays strictly below the server's
@@ -159,6 +164,13 @@ type IngestRequest struct {
 	OS           string `json:"os"`
 	Arch         string `json:"arch"`
 	Hostname     string `json:"hostname"`
+
+	// OSPretty is a human-readable software description of the machine — a Linux
+	// distribution name and version, or a macOS release name — for display only. It
+	// describes the operating system, never a person, and it is capped at
+	// MaxOSPrettyBytes and truncated by the agent before it ever reaches the wire.
+	// Optional: an agent that cannot determine it sends nothing, same as Hostname.
+	OSPretty string `json:"os_pretty,omitempty"`
 
 	Samples []Sample `json:"samples"`
 }
