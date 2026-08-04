@@ -1,3 +1,16 @@
+# Build output.
 bin/
+
+# The locally-built binary at the repo root.
+#
+# Anchored with a leading slash on purpose: an unanchored "serveragent" pattern also
+# matches the cmd/serveragent/ SOURCE directory, which silently excluded the entire agent
+# from v0.1.0 — the module published with only the protocol package in it.
+/serveragent
+
+# Agent spool files, if one is ever run from the working tree.
 *.jsonl
-serveragent
+
+# IDE configuration.
+.idea/
+.vscode/

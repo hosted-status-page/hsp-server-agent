@@ -9,7 +9,7 @@ TARGETS ?= linux/amd64 linux/arm64
 
 LDFLAGS = -s -w -X 'main.AgentVersion=$(VERSION)'
 
-.PHONY: build release metrics test lint clean
+.PHONY: build release metrics test lint clean check-tracked verify-release
 
 ## build: compile for the current platform, for local testing
 build:
@@ -55,6 +55,60 @@ test:
 lint:
 	go vet ./...
 	@test -z "$$(gofmt -l . )" || (echo "unformatted files:"; gofmt -l .; exit 1)
+
+## check-tracked: fail if anything needed to build is missing from git
+#
+# v0.1.0 shipped without cmd/serveragent/ because an unanchored "serveragent" line in
+# .gitignore matched the source directory as well as the built binary. The module
+# published, resolved, and imported fine — it just had no agent in it. Nothing in a normal
+# build catches that, because the working tree has the files.
+check-tracked:
+	@set -e; \
+	missing=0; \
+	for f in $$(git ls-files --others --exclude-standard --directory) ; do :; done; \
+	for required in cmd/serveragent/main.go cmd/serveragent/collect.go \
+	                cmd/serveragent/client.go cmd/serveragent/config.go \
+	                cmd/serveragent/spool.go protocol/protocol.go \
+	                install.sh LICENSE README.md go.mod go.sum; do \
+		if ! git ls-files --error-unmatch "$$required" >/dev/null 2>&1; then \
+			echo "❌ not tracked by git: $$required"; \
+			missing=1; \
+		fi; \
+	done; \
+	if git ls-files | grep -q '^\.idea/'; then \
+		echo "❌ .idea/ is tracked; it should not ship in a public module"; \
+		missing=1; \
+	fi; \
+	if [ "$$missing" = "1" ]; then \
+		echo ""; \
+		echo "Refusing to tag: the published module would be missing files."; \
+		exit 1; \
+	fi; \
+	echo "✅ every file needed to build is tracked"
+
+## verify-release: check that a published version actually contains the agent
+#
+# Run after pushing a tag. Downloads the module as a consumer would and asserts the binary
+# package is present, rather than trusting that the working tree matched what was pushed.
+verify-release:
+	@set -e; \
+	v="$(VERSION)"; \
+	case "$$v" in v*) ;; *) v="v$$v";; esac; \
+	url="https://proxy.golang.org/github.com/hosted-status-page/hsp-server-agent/@v/$$v.zip"; \
+	tmp=$$(mktemp -d); \
+	echo "⬇️  fetching $$v from the module proxy"; \
+	curl -fsSL "$$url" -o "$$tmp/m.zip" || { echo "❌ $$v is not on the proxy yet"; rm -rf "$$tmp"; exit 1; }; \
+	if unzip -Z1 "$$tmp/m.zip" | grep -q 'cmd/serveragent/main.go'; then \
+		echo "✅ $$v contains cmd/serveragent"; \
+	else \
+		echo "❌ $$v does NOT contain cmd/serveragent — consumers cannot build the agent"; \
+		unzip -Z1 "$$tmp/m.zip" | sed 's|.*@[^/]*/||' | sort | sed 's/^/    /'; \
+		rm -rf "$$tmp"; exit 1; \
+	fi; \
+	if unzip -Z1 "$$tmp/m.zip" | grep -q '\.idea/'; then \
+		echo "⚠️  $$v also ships .idea/ IDE config"; \
+	fi; \
+	rm -rf "$$tmp"
 
 ## clean: remove build output
 clean:
