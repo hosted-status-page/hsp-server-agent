@@ -89,36 +89,54 @@ func (c *Collector) collectCPU(ctx context.Context, s *protocol.Sample, cur *cou
 	cur.cpuTimes = times[0]
 	cur.cpuValid = true
 
-	if !c.prev.cpuValid {
+	populateCPUPercentages(s, c.prev, times[0])
+}
+
+// populateCPUPercentages turns two aggregate CPU counter snapshots into wall-clock
+// percentages. A nil metric means the interval could not be measured; a measured zero
+// remains a real zero pointer.
+//
+// If any counter that feeds the total moved backwards, the whole interval is discarded:
+// the shared denominator would be wrong for every percentage, not only the one whose
+// counter reset.
+func populateCPUPercentages(s *protocol.Sample, prev counterSnapshot, now cpu.TimesStat) {
+	if !prev.cpuValid {
 		return
 	}
 
-	prev := c.prev.cpuTimes
-	now := times[0]
+	previous := prev.cpuTimes
+	if cpuCountersMovedBackwards(previous, now) {
+		return
+	}
 
 	// Total includes idle, so percentages are of wall-clock CPU time rather than of
 	// busy time — a spike in iowait must not inflate the user percentage.
 	deltaTotal := (now.User + now.System + now.Idle + now.Nice + now.Iowait +
 		now.Irq + now.Softirq + now.Steal) -
-		(prev.User + prev.System + prev.Idle + prev.Nice + prev.Iowait +
-			prev.Irq + prev.Softirq + prev.Steal)
+		(previous.User + previous.System + previous.Idle + previous.Nice + previous.Iowait +
+			previous.Irq + previous.Softirq + previous.Steal)
 	if deltaTotal <= 0 {
 		return
 	}
 
 	pct := func(nowV, prevV float64) *float32 {
-		d := nowV - prevV
-		if d < 0 {
-			// Counters reset on reboot; report nothing rather than a negative spike.
-			return nil
-		}
-		v := float32(d / deltaTotal * 100)
+		v := float32((nowV - prevV) / deltaTotal * 100)
 		return &v
 	}
 
-	s.CPUUserPct = pct(now.User+now.Nice, prev.User+prev.Nice)
-	s.CPUSystemPct = pct(now.System+now.Irq+now.Softirq, prev.System+prev.Irq+prev.Softirq)
-	s.CPUIOWaitPct = pct(now.Iowait, prev.Iowait)
+	s.CPUUserPct = pct(now.User+now.Nice, previous.User+previous.Nice)
+	s.CPUSystemPct = pct(now.System+now.Irq+now.Softirq, previous.System+previous.Irq+previous.Softirq)
+	s.CPUIOWaitPct = pct(now.Iowait, previous.Iowait)
+	s.CPUStealPct = pct(now.Steal, previous.Steal)
+}
+
+// cpuCountersMovedBackwards reports whether any counter that participates in the CPU
+// total decreased between two snapshots, which happens when the counters reset (reboot,
+// or a hypervisor adjusting accounting) and makes the interval meaningless.
+func cpuCountersMovedBackwards(prev, now cpu.TimesStat) bool {
+	return now.User < prev.User || now.System < prev.System || now.Idle < prev.Idle ||
+		now.Nice < prev.Nice || now.Iowait < prev.Iowait || now.Irq < prev.Irq ||
+		now.Softirq < prev.Softirq || now.Steal < prev.Steal
 }
 
 func (c *Collector) collectMemory(ctx context.Context, s *protocol.Sample) {

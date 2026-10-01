@@ -351,7 +351,10 @@ func printCollectedMetrics() {
 	fmt.Print(`statuspage-serveragent collects exactly the following, and nothing else:
 
 CPU
-  cpu_user_pct, cpu_system_pct, cpu_iowait_pct   percentages of wall-clock CPU time
+  cpu_user_pct, cpu_system_pct, cpu_iowait_pct,
+  cpu_steal_pct                                  percentages of wall-clock CPU time
+  CPU steal is the percentage of CPU time the virtual machine was ready to run but the
+  hypervisor was servicing another workload
 
 Memory
   mem_used_bytes, mem_total_bytes

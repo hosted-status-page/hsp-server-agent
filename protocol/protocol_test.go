@@ -17,7 +17,7 @@ import (
 func TestSampleJSONTagsAreStable(t *testing.T) {
 	want := []string{
 		"sampled_at",
-		"cpu_user_pct", "cpu_system_pct", "cpu_iowait_pct",
+		"cpu_user_pct", "cpu_system_pct", "cpu_iowait_pct", "cpu_steal_pct",
 		"mem_used_bytes", "mem_total_bytes", "swap_used_bytes", "swap_total_bytes",
 		"load1", "load5", "load15",
 		"disk_used_bytes", "disk_total_bytes", "disk_read_bps", "disk_write_bps",
@@ -34,6 +34,7 @@ func TestSampleJSONTagsAreStable(t *testing.T) {
 		CPUUserPct:     f32(1),
 		CPUSystemPct:   f32(1),
 		CPUIOWaitPct:   f32(1),
+		CPUStealPct:    f32(1),
 		MemUsedBytes:   i64(1),
 		MemTotalBytes:  i64(1),
 		SwapUsedBytes:  i64(1),
@@ -91,8 +92,13 @@ func TestUnmeasuredFieldsAreOmitted(t *testing.T) {
 
 	zero := float32(0)
 	encoded, _ = json.Marshal(Sample{SampledAt: time.Unix(0, 0).UTC(), CPUUserPct: &zero})
-	if !strings.Contains(string(encoded), "cpu_user_pct") {
+	if !strings.Contains(string(encoded), `"cpu_user_pct":0`) {
 		t.Error("a genuinely measured zero was omitted from the payload")
+	}
+
+	encoded, _ = json.Marshal(Sample{SampledAt: time.Unix(0, 0).UTC(), CPUStealPct: &zero})
+	if !strings.Contains(string(encoded), `"cpu_steal_pct":0`) {
+		t.Error("a genuinely measured zero steal percentage was omitted from the payload")
 	}
 }
 
@@ -150,6 +156,7 @@ func TestFullBatchFitsWithinBodyCap(t *testing.T) {
 		CPUUserPct:     f32(99.999),
 		CPUSystemPct:   f32(99.999),
 		CPUIOWaitPct:   f32(99.999),
+		CPUStealPct:    f32(99.999),
 		MemUsedBytes:   i64(1 << 62),
 		MemTotalBytes:  i64(1 << 62),
 		SwapUsedBytes:  i64(1 << 62),

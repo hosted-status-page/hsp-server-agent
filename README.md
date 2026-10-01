@@ -29,7 +29,7 @@ this agent feeds.
 
 | Group   | Metrics                                                                                                                                      |
 |---------|----------------------------------------------------------------------------------------------------------------------------------------------|
-| CPU     | `cpu_user_pct`, `cpu_system_pct`, `cpu_iowait_pct` — percentages of wall-clock CPU time                                                      |
+| CPU     | `cpu_user_pct`, `cpu_system_pct`, `cpu_iowait_pct`, `cpu_steal_pct` — percentages of wall-clock CPU time                                     |
 | Memory  | `mem_used_bytes`, `mem_total_bytes`, `swap_used_bytes`, `swap_total_bytes`                                                                   |
 | Load    | `load1`, `load5`, `load15`                                                                                                                   |
 | Disk    | `disk_used_bytes`, `disk_total_bytes` (root), `disk_read_bps`, `disk_write_bps`, plus per-mount used/total for physical filesystems (max 20) |
@@ -38,6 +38,10 @@ this agent feeds.
 
 `serveragent -metrics` prints this from the binary itself, so it cannot drift from what
 the code does.
+
+`cpu_steal_pct` is the percentage of CPU time a virtual machine was ready to run but the
+hypervisor was servicing another workload. It is a diagnostic signal, not proof of a
+provider fault.
 
 ## What it does not collect
 

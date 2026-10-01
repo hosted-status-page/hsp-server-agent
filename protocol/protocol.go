@@ -100,6 +100,7 @@ type Sample struct {
 	CPUUserPct   *float32 `json:"cpu_user_pct,omitempty"`
 	CPUSystemPct *float32 `json:"cpu_system_pct,omitempty"`
 	CPUIOWaitPct *float32 `json:"cpu_iowait_pct,omitempty"`
+	CPUStealPct  *float32 `json:"cpu_steal_pct,omitempty"`
 
 	MemUsedBytes   *int64 `json:"mem_used_bytes,omitempty"`
 	MemTotalBytes  *int64 `json:"mem_total_bytes,omitempty"`

@@ -48,7 +48,7 @@ Options:
   --hostname <name>      Hostname to report. Pass an empty string to report none:
                          hostnames often contain a person's name, and nothing requires one.
   --interval <seconds>   Collection interval (default: 60)
-  --version <version>    Agent version to install (default: 0.1.0)
+  --version <version>    Agent version to install (default: the release this script was published with)
   --uninstall            Remove the agent, its config, and its buffered data
   -h, --help             Show this help
 
