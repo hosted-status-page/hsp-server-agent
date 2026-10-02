@@ -114,10 +114,11 @@ func (c *Client) Push(ctx context.Context, req protocol.IngestRequest) (*protoco
 	}
 }
 
-// FetchVersion asks the server which agent release is current. Advisory only: this
-// agent reports an available update, it does not download or execute anything on its
-// own, because self-updating code on a customer's host is a supply-chain risk they did
-// not sign up for by installing a metrics collector.
+// FetchVersion asks the server which agent release is current. The running agent only
+// reports an available update; it never downloads or executes anything on its own,
+// because self-updating code on a customer's host is a supply-chain risk they did not
+// sign up for by installing a metrics collector. Applying an update is a separate,
+// operator-run command (--update), which uses this call to learn what "latest" is.
 func (c *Client) FetchVersion(ctx context.Context) (*protocol.VersionResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.endpoint+protocol.PathVersion, nil)

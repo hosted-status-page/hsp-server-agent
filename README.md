@@ -65,8 +65,10 @@ its request rejected outright rather than silently stored. See
 ## What it will never do
 
 - **It never executes commands sent by the server.** The protocol has no such message.
-- **It never downloads or runs code.** It checks whether a newer release exists and logs
-  that fact; applying the update is your decision. An agent that could silently update
+- **It never downloads or runs code on its own.** The running agent only checks whether a
+  newer release exists and logs that fact. Replacing the binary happens only when you run
+  `sudo /usr/local/bin/serveragent --update` (or re-run the installer with `--upgrade`) —
+  nothing in the collection loop can trigger it. An agent that could silently update
   itself would make one compromised release key a foothold on every host running it.
 
 ## Install
@@ -83,6 +85,31 @@ download [`install.sh`](install.sh) first and read it — it is written to be re
 
 The installer verifies the binary's SHA-256 against the published checksum and **refuses
 to install if it cannot**. There is no soft-fail path.
+
+## Update
+
+```bash
+sudo /usr/local/bin/serveragent --update
+```
+
+`--update` asks your configured endpoint which release is current, downloads the matching
+`serveragent-<version>-linux-<arch>` and `SHA256SUMS` over HTTPS, verifies the checksum,
+runs the downloaded binary once with `-version` to confirm it is the expected release, and
+only then atomically replaces the installed binary. If anything fails, the installed
+binary is left untouched. It does **not** restart the service; it prints the command to do
+so (`sudo systemctl restart statuspage-serveragent`).
+
+Exit codes: `0` updated or already current, `2` configuration, `3` release unavailable
+(network, version lookup, missing artifact), `4` verification failed (checksum entry
+missing, checksum mismatch, wrong binary), `5` cannot write the install location (use
+`sudo`), `6` unsupported OS/architecture, `1` anything else.
+
+Agents older than the first release that has `--update` can update once with the
+installer, which reuses the existing configuration and restarts the service:
+
+```bash
+curl -fsSL https://statuspage.me/install-server-agent.sh | sudo bash -s -- --upgrade
+```
 
 It sets up:
 

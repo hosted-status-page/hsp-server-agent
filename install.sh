@@ -4,7 +4,9 @@
 #
 # The agent collects host metrics (CPU, memory, load, disk, network) and pushes them to
 # your StatusPage.me account every 60 seconds. It is read-only: it never executes
-# commands sent by the server, and never downloads or runs code after installation.
+# commands sent by the server, and never downloads or runs code on its own. Updating is
+# something you do on purpose, either with 'serveragent --update' or by running this
+# script again with --upgrade.
 #
 # Run 'serveragent -metrics' after installing to print the complete list of what it
 # collects, or 'serveragent -dry-run' to see a real sample from this host.
@@ -14,6 +16,10 @@
 # Usage:
 #   curl -fsSL https://statuspage.me/install-server-agent.sh | sudo bash -s -- \
 #     --server-id <uuid> --ingest-key <key>
+#
+# To update an existing install without the ingest key (agents older than the ones that
+# have 'serveragent --update'):
+#   curl -fsSL https://statuspage.me/install-server-agent.sh | sudo bash -s -- --upgrade
 #
 # Piping a script to a root shell requires trusting the source. If you would rather not,
 # download it first, read it, then run it — it is written to be readable.
@@ -25,6 +31,8 @@ SERVER_ID=""
 INGEST_KEY=""
 HOSTNAME_OVERRIDE=""
 HOSTNAME_SET=0
+ENDPOINT_SET=0
+UPGRADE=0
 VERSION="0.1.0"
 INTERVAL="60"
 
@@ -38,6 +46,7 @@ SERVICE_USER="statuspage-agent"
 usage() {
     cat <<'USAGE'
 Usage: install-server-agent.sh --server-id <uuid> --ingest-key <key> [options]
+       install-server-agent.sh --upgrade [--endpoint <url>] [--version <version>]
 
 Required:
   --server-id <uuid>     Server ID from your StatusPage.me dashboard
@@ -49,6 +58,9 @@ Options:
                          hostnames often contain a person's name, and nothing requires one.
   --interval <seconds>   Collection interval (default: 60)
   --version <version>    Agent version to install (default: the release this script was published with)
+  --upgrade              Replace the binary of an existing install and restart the service.
+                         Keeps the existing config, ingest key, service unit and spool.
+                         Needs no --server-id or --ingest-key.
   --uninstall            Remove the agent, its config, and its buffered data
   -h, --help             Show this help
 
@@ -106,10 +118,11 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --server-id)  SERVER_ID="${2:-}"; shift 2 ;;
         --ingest-key) INGEST_KEY="${2:-}"; shift 2 ;;
-        --endpoint)   ENDPOINT="${2:-}"; shift 2 ;;
+        --endpoint)   ENDPOINT="${2:-}"; ENDPOINT_SET=1; shift 2 ;;
         --hostname)   HOSTNAME_OVERRIDE="${2:-}"; HOSTNAME_SET=1; shift 2 ;;
         --interval)   INTERVAL="${2:-}"; shift 2 ;;
         --version)    VERSION="${2:-}"; shift 2 ;;
+        --upgrade)    UPGRADE=1; shift ;;
         --uninstall)  uninstall ;;
         -h|--help)    usage; exit 0 ;;
         *) die "unknown option: $1 (try --help)" ;;
@@ -119,8 +132,22 @@ done
 require_root
 require_systemd
 
-[ -n "${SERVER_ID}" ]  || die "--server-id is required (find it in your dashboard)"
-[ -n "${INGEST_KEY}" ] || die "--ingest-key is required (shown once when the server was added)"
+if [ "${UPGRADE}" -eq 1 ]; then
+    # An upgrade only swaps the binary. Settings that belong to a fresh install would be
+    # silently ignored, so refuse them rather than let someone think they took effect.
+    [ -z "${SERVER_ID}${INGEST_KEY}" ] && [ "${HOSTNAME_SET}" -eq 0 ] \
+        || die "--upgrade keeps the existing configuration; do not combine it with --server-id, --ingest-key or --hostname"
+    [ -f "${CONFIG_FILE}" ] && [ -f "${SERVICE_FILE}" ] \
+        || die "no existing installation found (expected ${CONFIG_FILE} and ${SERVICE_FILE}); install with --server-id and --ingest-key instead"
+    if [ "${ENDPOINT_SET}" -eq 0 ]; then
+        # Download from wherever this host was installed from, not the compiled-in default.
+        CONFIGURED_ENDPOINT="$(sed -n 's/^SP_ENDPOINT=//p' "${CONFIG_FILE}" | head -n 1 | tr -d "\"' ")"
+        [ -z "${CONFIGURED_ENDPOINT}" ] || ENDPOINT="${CONFIGURED_ENDPOINT%/}"
+    fi
+else
+    [ -n "${SERVER_ID}" ]  || die "--server-id is required (find it in your dashboard)"
+    [ -n "${INGEST_KEY}" ] || die "--ingest-key is required (shown once when the server was added)"
+fi
 
 ARCH="$(detect_arch)"
 ASSET="serveragent-${VERSION}-linux-${ARCH}"
@@ -149,6 +176,27 @@ if curl -fsSL "${CHECKSUM_URL}" -o "${TMP_DIR}/SHA256SUMS" 2>/dev/null; then
     log "checksum verified"
 else
     die "could not fetch ${CHECKSUM_URL}; refusing to install an unverified binary"
+fi
+
+if [ "${UPGRADE}" -eq 1 ]; then
+    # Stage beside the target and rename, so the binary is replaced atomically and a
+    # failed copy can never leave a half-written executable behind.
+    log "replacing ${INSTALL_DIR}/serveragent"
+    STAGED="${INSTALL_DIR}/.serveragent.upgrade.$$"
+    trap 'rm -rf "${TMP_DIR}" "${STAGED}"' EXIT
+    install -m 0755 "${TMP_DIR}/serveragent" "${STAGED}"
+    mv -f "${STAGED}" "${INSTALL_DIR}/serveragent"
+
+    log "restarting the service"
+    systemctl restart statuspage-serveragent.service
+    sleep 3
+    if systemctl is-active --quiet statuspage-serveragent.service; then
+        log "the Server Agent was upgraded to ${VERSION} and is running"
+        exit 0
+    fi
+    warn "the service did not start cleanly after the upgrade"
+    journalctl -u statuspage-serveragent -n 20 --no-pager || true
+    exit 1
 fi
 
 log "creating the ${SERVICE_USER} service account"

@@ -5,8 +5,10 @@
 //
 // The agent is read-only by design: it collects a fixed list of numeric metrics and
 // sends them over HTTPS. It executes no commands, accepts no instructions from the
-// server, reads no file contents, and never downloads or runs code. Run `serveragent
-// -metrics` to print the complete list of what it collects.
+// server, reads no file contents, and never downloads or runs code on its own. The one
+// exception is `serveragent --update`, which an operator runs by hand to replace the
+// binary with a checksum-verified release; nothing in the collection loop ever calls
+// it. Run `serveragent -metrics` to print the complete list of what it collects.
 package main
 
 import (
@@ -50,6 +52,7 @@ func main() {
 		showMetrics = flag.Bool("metrics", false, "print the exact list of collected metrics and exit")
 		oneShot     = flag.Bool("once", false, "collect and push a single sample, then exit")
 		dryRun      = flag.Bool("dry-run", false, "collect a sample and print it without sending")
+		update      = flag.Bool("update", false, "download, verify and install the latest release, then exit (does not restart the service)")
 	)
 	flag.Parse()
 
@@ -60,6 +63,9 @@ func main() {
 	if *showMetrics {
 		printCollectedMetrics()
 		return
+	}
+	if *update {
+		os.Exit(runUpdate(*configPath, os.Stdout, os.Stderr))
 	}
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -280,7 +286,7 @@ func (a *Agent) resetBackoff() {
 }
 
 // checkVersion reports whether a newer agent release is available. It never downloads
-// or installs anything; updating is the operator's decision.
+// or installs anything; updating is the operator's decision (see runUpdate).
 func (a *Agent) checkVersion(ctx context.Context) {
 	checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -290,8 +296,8 @@ func (a *Agent) checkVersion(ctx context.Context) {
 		return
 	}
 	if info.Version != "" && info.Version != AgentVersion {
-		log.Printf("a newer agent is available (running %s, current %s); update with your package manager or the install script",
-			AgentVersion, info.Version)
+		log.Printf("a newer agent is available (running %s, current %s); update with: sudo %s --update",
+			AgentVersion, info.Version, installedBinaryPath)
 	}
 }
 

@@ -74,8 +74,11 @@ The last point matters: the guarantee does not depend on running our build of th
 ## What is never done
 
 - The agent never executes commands sent by the server. The protocol has no such message.
-- The agent never downloads or runs code. It reports that a newer release exists; applying
-  it is your decision.
+- The agent never downloads or runs code on its own. It reports that a newer release
+  exists; applying it is your decision, made by running `serveragent --update` (or the
+  installer with `--upgrade`) on the host. An update downloads only the published binary
+  and checksum list from your configured endpoint, over HTTPS, and installs nothing that
+  fails the checksum.
 
 ## Data in transit
 

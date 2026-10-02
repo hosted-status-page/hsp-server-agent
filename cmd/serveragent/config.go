@@ -118,8 +118,9 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks the configuration is usable before the agent starts collecting.
-func (c *Config) Validate() error {
+// validateEndpoint checks SP_ENDPOINT alone. It is shared with --update, which needs a
+// trustworthy endpoint but has no use for the server ID or ingest key.
+func (c *Config) validateEndpoint() error {
 	if c.Endpoint == "" {
 		return errors.New("SP_ENDPOINT is required")
 	}
@@ -132,6 +133,14 @@ func (c *Config) Validate() error {
 		if !strings.HasPrefix(c.Endpoint, "http://") {
 			return errors.New("SP_ENDPOINT must start with http:// or https://")
 		}
+	}
+	return nil
+}
+
+// Validate checks the configuration is usable before the agent starts collecting.
+func (c *Config) Validate() error {
+	if err := c.validateEndpoint(); err != nil {
+		return err
 	}
 	if c.ServerID == "" {
 		return errors.New("SP_SERVER_ID is required")
