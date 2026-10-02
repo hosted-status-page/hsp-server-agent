@@ -95,11 +95,13 @@ sudo /usr/local/bin/serveragent --update
 `--update` asks your configured endpoint which release is current, downloads the matching
 `serveragent-<version>-linux-<arch>` and `SHA256SUMS` over HTTPS, verifies the checksum,
 runs the downloaded binary once with `-version` to confirm it is the expected release, and
-only then atomically replaces the installed binary. If anything fails, the installed
-binary is left untouched. It does **not** restart the service; it prints the command to do
+only then atomically replaces the installed binary. Before downloading anything it checks
+that the service's own account can read the config (see [Config permissions](#config-permissions)).
+If anything fails, the installed binary is left untouched. It does **not** restart the service; it prints the command to do
 so (`sudo systemctl restart statuspage-serveragent`).
 
-Exit codes: `0` updated or already current, `2` configuration, `3` release unavailable
+Exit codes: `0` updated or already current, `2` configuration (including a config the
+service account cannot read), `3` release unavailable
 (network, version lookup, missing artifact), `4` verification failed (checksum entry
 missing, checksum mismatch, wrong binary), `5` cannot write the install location (use
 `sudo`), `6` unsupported OS/architecture, `1` anything else.
@@ -140,6 +142,37 @@ name, which is what containers should do.
 | `SP_MAX_SPOOL_SAMPLES` | `2880`                                        | 48h at the default cadence.                                    |
 | `SP_HOSTNAME`          | auto-detected                                 | **Set empty to send no hostname at all.**                      |
 | `SP_INSECURE`          | `0`                                           | Local development only. The ingest key is a bearer credential. |
+
+### Config permissions
+
+The service runs as `statuspage-agent`, so what matters is whether *that* account can open
+the config, not whether root can. Two things have to hold:
+
+- `/etc/statuspage/serveragent.conf` is readable by the service group: owner `root`, group
+  `statuspage-agent`, mode `0640` (it holds the ingest key, so never world-readable).
+- Every directory above it is searchable by the service account. The installer creates
+  `/etc/statuspage` as `root:root 0755`.
+
+If you harden `/etc/statuspage` (for example to `0700`) the running agent keeps working,
+because it read its config at start, and then fails with `permission denied` the next time
+it restarts. Grant the service account traversal only, which lets it open the config by name
+without being able to list the directory or read anything else in it:
+
+```bash
+sudo setfacl -m u:statuspage-agent:x /etc/statuspage
+```
+
+`install.sh --upgrade` and `serveragent --update` check this as the service account before
+they replace the binary or restart anything, and stop with the exact cause if it fails.
+Neither ever changes permissions on your behalf.
+
+The check fails closed. The account and the config path come from what systemd will actually
+run (drop-ins included), and if they cannot be determined, or the check cannot be carried out
+as that account (systemd cannot be queried, the unit sets no `User=`, `install.sh` has no
+`runuser` or `setpriv`, `--update` is not run with `sudo`), the update stops rather than
+guessing. The one exception is a binary with no systemd unit at all, which is a standalone
+installation rather than the one the installer creates: there is no service account to
+check, and `--update` says so and carries on.
 
 ### About the hostname
 
@@ -182,6 +215,8 @@ serveragent -once       # collect and push a single sample, then exit
 - **401 in the journal** — the key was rotated, or the server was deleted. The agent logs
   the rejection and drops the batch rather than retrying forever.
 - **403** — the server is disabled in the dashboard.
+- **`permission denied` opening the config after a restart** — see
+  [Config permissions](#config-permissions).
 - **Nothing at all** — check `SP_ENDPOINT` is reachable from the host.
 
 ## Building
@@ -190,7 +225,7 @@ serveragent -once       # collect and push a single sample, then exit
 make build      # current platform
 make test       # go test -race ./...
 make lint       # vet + gofmt check
-make release    # linux/amd64 + linux/arm64 with SHA256SUMS into bin/dist/
+make release    # on a clean vX.Y.Z tag: linux/amd64 + linux/arm64 + SHA256SUMS in bin/dist/ (rehearsal), then prints the publish steps
 make metrics    # print the collected-metric list
 ```
 

@@ -2,8 +2,16 @@
 #
 # Release artifacts are what other people download and run on their own machines, so the
 # release target is explicit and never a side effect of anything else.
+#
+# The version of a release is its git tag (vMAJOR.MINOR.PATCH) and nothing else. The
+# StatusPage.me server pins that tag in its go.mod and builds, stamps and publishes the
+# binaries and the installer itself, so there is no second version to keep in step here:
+# VERSION is derived from the tag instead of being written down, and the "0.1.0" left in
+# cmd/serveragent/main.go and install.sh is only a placeholder that every build overrides.
+# An untagged or modified tree yields something like 0.1.4-3-gabc1234-dirty, which is
+# deliberately not a release version: --update and the version check treat it as unparseable.
 
-VERSION ?= 0.1.0
+VERSION ?= $(or $(shell git describe --tags --match 'v[0-9]*' --dirty 2>/dev/null | sed 's/^v//'),dev)
 DIST    ?= bin/dist
 TARGETS ?= linux/amd64 linux/arm64
 
@@ -16,13 +24,25 @@ build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/serveragent ./cmd/serveragent
 	@echo "✅ bin/serveragent ($(VERSION))"
 
-## release: cross-compile release artifacts with checksums
+## release: build and checksum the tagged release locally, as a rehearsal
+#
+# Refuses to run unless HEAD is exactly a clean vMAJOR.MINOR.PATCH tag and VERSION is that
+# tag. The binaries written here are for checking the tag builds, not for distribution:
+# builds are not reproducible across machines, so what customers download is built once by
+# the StatusPage.me repository's `make serveragent-publish` and never replaced afterwards.
 #
 # CGO_ENABLED=0 is required, not merely preferred: these binaries run on customer hosts of
 # unknown vintage, and a cgo build would bind to the glibc version of whatever machine
 # produced it. -s -w strips debug info to keep the download small.
 release:
 	@set -e; \
+	tag=$$(git describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null) \
+		|| { echo "❌ HEAD is not tagged vMAJOR.MINOR.PATCH; releases are built from a tag (git tag -s vX.Y.Z)"; exit 1; }; \
+	[ -z "$$(git status --porcelain)" ] || { echo "❌ the working tree has uncommitted changes"; exit 1; }; \
+	[ "$(VERSION)" = "$${tag#v}" ] \
+		|| { echo "❌ VERSION=$(VERSION) does not match the tag $$tag"; exit 1; }; \
+	echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' \
+		|| { echo "❌ $$tag is not a plain MAJOR.MINOR.PATCH release tag"; exit 1; }; \
 	rm -rf $(DIST); mkdir -p $(DIST); \
 	for target in $(TARGETS); do \
 		os=$$(echo "$$target" | cut -d/ -f1); \
@@ -31,17 +51,21 @@ release:
 		echo "🔨 building $$os/$$arch..."; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o "$$out" ./cmd/serveragent; \
 	done; \
-	cp install.sh $(DIST)/install.sh; \
 	cd $(DIST) && shasum -a 256 serveragent-* > SHA256SUMS; \
 	echo ""; \
-	echo "✅ Server Agent $(VERSION) artifacts in $(DIST):"; \
-	ls -lh serveragent-* install.sh; \
+	echo "✅ Server Agent $(VERSION) built from $$tag into $(DIST) (rehearsal; not for distribution):"; \
+	ls -lh serveragent-*; \
 	echo ""; \
 	cat SHA256SUMS; \
 	echo ""; \
-	echo "Next:"; \
-	echo "  1. publish $(DIST)/* to <endpoint>/dist/serveragent/"; \
-	echo "  2. bump the server's advertised agent version to $(VERSION)"
+	echo "Next, to publish $$tag:"; \
+	echo "  1. git push origin $$tag"; \
+	echo "  2. make verify-release VERSION=$(VERSION)      (the module proxy serves it, agent included)"; \
+	echo "  3. in the StatusPage.me repository:"; \
+	echo "       go get github.com/hosted-status-page/hsp-server-agent@$$tag"; \
+	echo "       make serveragent-publish      (builds, stamps and stages binaries, SHA256SUMS, installer)"; \
+	echo "       make serveragent-verify"; \
+	echo "       make deploy                   (only now does the server advertise $(VERSION))"
 
 ## metrics: print exactly what the agent collects
 metrics:
@@ -68,7 +92,8 @@ check-tracked:
 	for f in $$(git ls-files --others --exclude-standard --directory) ; do :; done; \
 	for required in cmd/serveragent/main.go cmd/serveragent/collect.go \
 	                cmd/serveragent/client.go cmd/serveragent/config.go \
-	                cmd/serveragent/spool.go protocol/protocol.go \
+	                cmd/serveragent/spool.go cmd/serveragent/update.go \
+	                cmd/serveragent/preflight.go protocol/protocol.go \
 	                install.sh LICENSE README.md go.mod go.sum; do \
 		if ! git ls-files --error-unmatch "$$required" >/dev/null 2>&1; then \
 			echo "❌ not tracked by git: $$required"; \
