@@ -27,9 +27,13 @@ import (
 	"github.com/hosted-status-page/hsp-server-agent/protocol"
 )
 
-// AgentVersion is the build version, overridable at link time:
+// AgentVersion is the build version, set at link time:
 //
 //	go build -ldflags "-X main.AgentVersion=1.2.3"
+//
+// The release version is the git tag. Every build (make build, make release, and the
+// StatusPage.me server's publish step) stamps it, so the value here is only a placeholder
+// for a plain `go build`; it is not a version anyone should edit.
 var AgentVersion = "0.1.0"
 
 // Push and retry behaviour.
@@ -295,10 +299,29 @@ func (a *Agent) checkVersion(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	if info.Version != "" && info.Version != AgentVersion {
-		log.Printf("a newer agent is available (running %s, current %s); update with: sudo %s --update",
-			AgentVersion, info.Version, installedBinaryPath)
+	if msg := versionCheckMessage(AgentVersion, info.Version); msg != "" {
+		log.Print(msg)
 	}
+}
+
+// versionCheckMessage turns the running and advertised versions into the line to log, or
+// "" when there is nothing to say. Only a strictly newer advertised release counts as an
+// update: an agent that is current or newer than the server expects (a canary, a rollback
+// of the server) stays quiet, and versions that do not parse are reported as such rather
+// than guessed at. The comparison is the one --update uses.
+func versionCheckMessage(running, advertised string) string {
+	if advertised == "" {
+		return ""
+	}
+	newer, err := updateAvailable(running, advertised)
+	if err != nil {
+		return fmt.Sprintf("cannot compare agent versions (running %q, advertised %q): %v", running, advertised, err)
+	}
+	if !newer {
+		return ""
+	}
+	return fmt.Sprintf("a newer agent is available (running %s, current %s); update with: sudo %s --update",
+		running, advertised, installedBinaryPath)
 }
 
 // resolveHostname decides what hostname to report.
@@ -391,7 +414,8 @@ It does NOT collect:
   - network peers, connections, or packet contents
   - anything that identifies a person
 
-It also never executes commands sent by the server, and never downloads or runs code.
+It also never executes commands sent by the server, and never downloads or runs code on
+its own: only 'serveragent --update', which you run yourself, replaces the binary.
 Run 'serveragent -dry-run' to print a real sample from this host.
 `)
 }

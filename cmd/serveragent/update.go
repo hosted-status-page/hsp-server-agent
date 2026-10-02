@@ -104,6 +104,10 @@ type Updater struct {
 	Rename func(oldPath, newPath string) error
 	// SmokeTest runs the staged binary with -version and returns its output.
 	SmokeTest func(ctx context.Context, binary string) (string, error)
+	// ConfigCheck, when set, runs after the version comparison and before anything is
+	// downloaded or replaced. It verifies that the service's own identity can read the
+	// config, so a binary is never swapped in for a service that cannot start.
+	ConfigCheck func(ctx context.Context) error
 }
 
 // NewUpdater wires an Updater to the real filesystem and the running binary.
@@ -204,6 +208,14 @@ func (u *Updater) Run(ctx context.Context) (*UpdateResult, error) {
 
 	if compareAgentVersions(installed, latest) >= 0 {
 		return &UpdateResult{UpToDate: true, From: u.CurrentVersion, To: formatAgentVersion(installed), Path: exePath}, nil
+	}
+
+	// Do this before any download or write: replacing a working binary for a service that
+	// cannot read its own config would only surface on the next restart.
+	if u.ConfigCheck != nil {
+		if err := u.ConfigCheck(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// From here on the executable path matters, so surface a path the service probably
@@ -425,6 +437,21 @@ func compareAgentVersions(a, b agentVersion) int {
 	return 0
 }
 
+// updateAvailable reports whether advertised is strictly newer than running, using the
+// same parsing and numeric comparison as --update. Either side failing to parse is an
+// error, never "no update" or "update".
+func updateAvailable(running, advertised string) (bool, error) {
+	r, err := parseAgentVersion(running)
+	if err != nil {
+		return false, err
+	}
+	a, err := parseAgentVersion(advertised)
+	if err != nil {
+		return false, err
+	}
+	return compareAgentVersions(r, a) < 0, nil
+}
+
 func formatAgentVersion(v agentVersion) string {
 	return fmt.Sprintf("%d.%d.%d", v[0], v[1], v[2])
 }
@@ -467,6 +494,7 @@ func runUpdateWith(configPath string, out, errOut io.Writer, tweak func(*Updater
 	defer cancel()
 
 	u := NewUpdater(cfg, out, errOut)
+	u.ConfigCheck = newServiceConfigCheck(configPath, errOut).Run
 	if tweak != nil {
 		tweak(u)
 	}

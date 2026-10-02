@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -642,6 +643,7 @@ func sandboxedUpdater(t *testing.T) func(*Updater) {
 	return func(u *Updater) {
 		u.GOOS, u.GOARCH = "linux", fakeArch
 		u.Executable = func() (string, error) { return exe, nil }
+		u.ConfigCheck = nil // the real check reads this host's systemd unit
 	}
 }
 
@@ -691,5 +693,77 @@ func TestRunUpdateReportsUpToDate(t *testing.T) {
 func TestUpdateCodeDefaultsToGeneric(t *testing.T) {
 	if updateCode(nil) != exitOK || updateCode(errors.New("x")) != exitGeneric {
 		t.Error("unexpected default exit codes")
+	}
+}
+
+func TestUpdateAvailable(t *testing.T) {
+	for _, tt := range []struct {
+		running, advertised string
+		want                bool
+	}{
+		{"0.1.4", "0.1.4", false},
+		{"0.1.4", "0.1.5", true},
+		{"0.1.9", "0.1.10", true},
+		{"0.1.10", "0.1.9", false}, // running newer than advertised: no nag
+		{"v0.1.4", "0.1.5", true},
+		{"0.1.4", "v0.1.5", true},
+		{"v0.1.5", "v0.1.5", false},
+		{"0.2.0", "0.1.99", false},
+	} {
+		got, err := updateAvailable(tt.running, tt.advertised)
+		if err != nil || got != tt.want {
+			t.Errorf("updateAvailable(%q, %q) = %v, %v; want %v, nil", tt.running, tt.advertised, got, err, tt.want)
+		}
+	}
+	for _, bad := range [][2]string{{"0.1.4", "latest"}, {"dev", "0.1.5"}, {"0.1.4", "0.1"}, {"0.1.4", "0.1.5-rc1"}, {"", "0.1.5"}, {"0.1.4", ""}} {
+		if got, err := updateAvailable(bad[0], bad[1]); err == nil || got {
+			t.Errorf("updateAvailable(%q, %q) = %v, %v; want an error and false", bad[0], bad[1], got, err)
+		}
+	}
+}
+
+func TestVersionCheckMessage(t *testing.T) {
+	if msg := versionCheckMessage("0.1.4", "0.1.5"); !strings.Contains(msg, "a newer agent is available") || !strings.Contains(msg, "sudo "+installedBinaryPath+" --update") {
+		t.Errorf("update message = %q", msg)
+	}
+	for _, tt := range [][2]string{{"0.1.4", "0.1.4"}, {"0.1.5", "0.1.4"}, {"0.1.10", "0.1.9"}, {"v0.1.4", "0.1.4"}, {"0.1.4", ""}} {
+		if msg := versionCheckMessage(tt[0], tt[1]); msg != "" {
+			t.Errorf("versionCheckMessage(%q, %q) = %q, want silence", tt[0], tt[1], msg)
+		}
+	}
+	msg := versionCheckMessage("0.1.4", "latest")
+	if !strings.Contains(msg, "cannot compare agent versions") || strings.Contains(msg, "newer agent is available") {
+		t.Errorf("malformed advertised version message = %q", msg)
+	}
+}
+
+// checkVersion end to end: the daily check logs exactly one actionable line for a strictly
+// newer release and stays silent for equal or newer-than-advertised agents.
+func TestCheckVersionLogsOnlyForNewerRelease(t *testing.T) {
+	advertised := "0.1.5"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"version":%q}`, advertised)
+	}))
+	defer srv.Close()
+	agent := &Agent{client: NewClient(&Config{Endpoint: srv.URL, ServerID: "s", IngestKey: "k"})}
+
+	prevVersion, prevOut, prevFlags := AgentVersion, log.Writer(), log.Flags()
+	defer func() { AgentVersion = prevVersion; log.SetOutput(prevOut); log.SetFlags(prevFlags) }()
+	log.SetFlags(0)
+
+	run := func(running, adv string) string {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		AgentVersion, advertised = running, adv
+		agent.checkVersion(context.Background())
+		return buf.String()
+	}
+	if got := run("0.1.4", "0.1.5"); !strings.Contains(got, "a newer agent is available (running 0.1.4, current 0.1.5)") {
+		t.Errorf("0.1.4 vs 0.1.5 logged %q", got)
+	}
+	for _, c := range [][2]string{{"0.1.5", "0.1.5"}, {"0.1.10", "0.1.9"}, {"v0.1.5", "0.1.5"}} {
+		if got := run(c[0], c[1]); got != "" {
+			t.Errorf("running %s advertised %s logged %q, want silence", c[0], c[1], got)
+		}
 	}
 }
